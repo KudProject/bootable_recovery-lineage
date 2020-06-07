@@ -92,7 +92,7 @@ class Menu {
  public:
   virtual ~Menu() = default;
   // Returns the current menu selection.
-  size_t selection() const;
+  int selection() const;
   // Sets the current selection to |sel|. Handle the overflow cases depending on if the menu is
   // scrollable.
   virtual int Select(int sel) = 0;
@@ -112,7 +112,7 @@ class Menu {
  protected:
   Menu(size_t initial_selection, const DrawInterface& draw_func);
   // Current menu selection.
-  size_t selection_;
+  int selection_;
   // Reference to the class that implements all the draw functions.
   const DrawInterface& draw_funcs_;
 };
@@ -300,7 +300,7 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   // menu display
   size_t ShowMenu(const std::vector<std::string>& headers, const std::vector<std::string>& items,
                   size_t initial_selection, bool menu_only,
-                  const std::function<int(int, bool)>& key_handler) override;
+                  const std::function<int(int, bool)>& key_handler, bool refreshable) override;
   void SetTitle(const std::vector<std::string>& lines) override;
 
   void KeyLongPress(int) override;
@@ -363,7 +363,8 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
 
   // Takes the ownership of |menu| and displays it.
   virtual size_t ShowMenu(std::unique_ptr<Menu>&& menu, bool menu_only,
-                          const std::function<int(int, bool)>& key_handler);
+                          const std::function<int(int, bool)>& key_handler,
+                          bool refreshable = false);
 
   // Sets the menu highlight to the given index, wrapping if necessary. Returns the actual item
   // selected.
@@ -421,7 +422,7 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
     return menu_char_width_;
   }
   int MenuItemPadding() const override {
-    return menu_char_height_ * 2 / 3;
+    return menu_char_height_;
   }
 
   std::unique_ptr<MenuDrawFunctions> menu_draw_funcs_;
@@ -444,6 +445,7 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
 
   std::unique_ptr<GRSurface> lineage_logo_;
   std::unique_ptr<GRSurface> back_icon_;
+  std::unique_ptr<GRSurface> back_icon_sel_;
   std::unique_ptr<GRSurface> fastbootd_logo_;
 
   // current_icon_ points to one of the frames in intro_frames_ or loop_frames_, indexed by

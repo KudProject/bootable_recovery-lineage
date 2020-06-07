@@ -57,7 +57,7 @@ static double now() {
 Menu::Menu(size_t initial_selection, const DrawInterface& draw_func)
     : selection_(initial_selection), draw_funcs_(draw_func) {}
 
-size_t Menu::selection() const {
+int Menu::selection() const {
   return selection_;
 }
 
@@ -110,7 +110,7 @@ bool TextMenu::ItemsOverflow(std::string* cur_selection_str) const {
   }
 
   *cur_selection_str =
-      android::base::StringPrintf("Current item: %zu/%zu", selection_ + 1, ItemsCount());
+      android::base::StringPrintf("Current item: %d/%zu", selection_ + 1, ItemsCount());
   return true;
 }
 
@@ -119,12 +119,14 @@ int TextMenu::Select(int sel) {
   CHECK_LE(ItemsCount(), static_cast<size_t>(std::numeric_limits<int>::max()));
   int count = ItemsCount();
 
+  int min = IsMain() ? 0 : -1; // -1 is back arrow
+
   // Wraps the selection at boundary if the menu is not scrollable.
   if (!scrollable_) {
-    if (sel < 0) {
+    if (sel < min) {
       selection_ = count - 1;
     } else if (sel >= count) {
-      selection_ = 0;
+      selection_ = min;
     } else {
       selection_ = sel;
     }
@@ -132,15 +134,17 @@ int TextMenu::Select(int sel) {
     return selection_;
   }
 
-  if (sel < 0) {
-    selection_ = 0;
+  if (sel < min) {
+    selection_ = min;
   } else if (sel >= count) {
     selection_ = count - 1;
   } else {
-    if (static_cast<size_t>(sel) < menu_start_) {
-      menu_start_--;
-    } else if (static_cast<size_t>(sel) >= MenuEnd()) {
-      menu_start_++;
+    if (sel >= 0) {
+      if (static_cast<size_t>(sel) < menu_start_) {
+        menu_start_--;
+      } else if (static_cast<size_t>(sel) >= MenuEnd()) {
+        menu_start_++;
+      }
     }
     selection_ = sel;
   }
@@ -199,7 +203,6 @@ int TextMenu::DrawItems(int x, int y, int screen_width, bool long_press) const {
   int item_container_offset = offset; // store it for drawing scrollbar on most top
 
   for (size_t i = MenuStart(); i < MenuEnd(); ++i) {
-    bool bold = false;
     if (i == selection()) {
       // Draw the highlight bar.
       draw_funcs_.SetColor(long_press ? UIElement::MENU_SEL_BG_ACTIVE : UIElement::MENU_SEL_BG);
@@ -207,11 +210,10 @@ int TextMenu::DrawItems(int x, int y, int screen_width, bool long_press) const {
       int bar_height = padding + char_height_ + padding;
       draw_funcs_.DrawHighlightBar(0, y + offset, screen_width, bar_height);
 
-      // Bold white text for the selected item.
+      // Colored text for the selected item.
       draw_funcs_.SetColor(UIElement::MENU_SEL_FG);
-      bold = true;
     }
-    offset += draw_funcs_.DrawTextLine(x, y + offset, TextItem(i), bold);
+    offset += draw_funcs_.DrawTextLine(x, y + offset, TextItem(i), false /* bold */);
 
     draw_funcs_.SetColor(UIElement::MENU);
   }
@@ -572,25 +574,39 @@ void ScreenRecoveryUI::draw_foreground_locked() {
   }
 }
 
-/* Lineage teal: #167c80 */
+/* recovery dark:  #7C4DFF
+   recovery light: #F890FF
+   fastbootd dark: #E65100
+   fastboot light: #FDD835 */
 void ScreenRecoveryUI::SetColor(UIElement e) const {
   switch (e) {
     case UIElement::INFO:
       gr_color(249, 194, 0, 255);
       break;
     case UIElement::HEADER:
-      gr_color(247, 0, 6, 255);
+      if (fastbootd_logo_enabled_)
+        gr_color(0xfd, 0xd8,0x35, 255);
+      else
+        gr_color(0xf8, 0x90, 0xff, 255);
       break;
     case UIElement::MENU:
-    case UIElement::MENU_SEL_BG:
       gr_color(0xd8, 0xd8, 0xd8, 255);
+      break;
+    case UIElement::MENU_SEL_BG:
+    case UIElement::SCROLLBAR:
+      if (fastbootd_logo_enabled_)
+        gr_color(0xe6, 0x51, 0x00, 255);
+      else
+        gr_color(0x7c, 0x4d, 0xff, 255);
       break;
     case UIElement::MENU_SEL_BG_ACTIVE:
       gr_color(0, 156, 100, 255);
       break;
     case UIElement::MENU_SEL_FG:
-    case UIElement::SCROLLBAR:
-      gr_color(0x16, 0x7c, 0x80, 255);
+      if (fastbootd_logo_enabled_)
+        gr_color(0, 0, 0, 255);
+      else
+        gr_color(0xd8, 0xd8, 0xd8, 255);
       break;
     case UIElement::LOG:
       gr_color(196, 196, 196, 255);
@@ -799,25 +815,17 @@ void ScreenRecoveryUI::draw_menu_and_text_buffer_locked(
     const std::vector<std::string>& help_message) {
   int y = margin_height_;
 
-  if (fastbootd_logo_ && fastbootd_logo_enabled_) {
-    // Try to get this centered on screen.
-    auto width = gr_get_width(fastbootd_logo_.get());
-    auto height = gr_get_height(fastbootd_logo_.get());
-    auto centered_x = ScreenWidth() / 2 - width / 2;
-    DrawSurface(fastbootd_logo_.get(), 0, 0, width, height, centered_x, y);
-    y += height;
-  }
-
   if (menu_) {
     int x = margin_width_ + kMenuIndent;
 
     SetColor(UIElement::INFO);
 
-    if (lineage_logo_ && back_icon_) {
-      auto logo_width = gr_get_width(lineage_logo_.get());
-      auto logo_height = gr_get_height(lineage_logo_.get());
+    auto& logo = fastbootd_logo_enabled_ ? fastbootd_logo_ : lineage_logo_;
+    if (logo && back_icon_) {
+      auto logo_width = gr_get_width(logo.get());
+      auto logo_height = gr_get_height(logo.get());
       auto centered_x = ScreenWidth() / 2 - logo_width / 2;
-      DrawSurface(lineage_logo_.get(), 0, 0, logo_width, logo_height, centered_x, y);
+      DrawSurface(logo.get(), 0, 0, logo_width, logo_height, centered_x, y);
       y += logo_height;
 
       if (!menu_->IsMain()) {
@@ -825,8 +833,10 @@ void ScreenRecoveryUI::draw_menu_and_text_buffer_locked(
         auto icon_h = gr_get_height(back_icon_.get());
         auto icon_x = centered_x / 2 - icon_w / 2;
         auto icon_y = y - logo_height / 2 - icon_h / 2;
-        gr_blit(back_icon_.get(), 0, 0, icon_w, icon_h, icon_x, icon_y);
+        gr_blit(back_icon_sel_ && menu_->selection() == -1 ? back_icon_sel_.get() : back_icon_.get(),
+                0, 0, icon_w, icon_h, icon_x, icon_y);
       }
+      y += MenuItemPadding();
     } else {
       for (size_t i = 0; i < title_lines_.size(); i++) {
         y += DrawTextLine(x, y, title_lines_[i], i == 0);
@@ -1022,6 +1032,7 @@ bool ScreenRecoveryUI::Init(const std::string& locale) {
 
   lineage_logo_ = LoadBitmap("logo_image");
   back_icon_ = LoadBitmap("ic_back");
+  back_icon_sel_ = LoadBitmap("ic_back_sel");
   if (android::base::GetBoolProperty("ro.boot.dynamic_partitions", false) ||
       android::base::GetBoolProperty("ro.fastbootd.available", false)) {
     fastbootd_logo_ = LoadBitmap("fastbootd");
@@ -1336,7 +1347,8 @@ int ScreenRecoveryUI::SelectMenu(const Point& point) {
       }
     }
 
-    if (point.y() >= menu_start_y_) {
+    if (point.y() >= menu_start_y_ &&
+        point.y() < menu_start_y_ + menu_->ItemsCount() * MenuItemHeight()) {
       int old_sel = menu_->selection();
       int relative_sel = (point.y() - menu_start_y_) / MenuItemHeight();
       new_sel = menu_->SelectVisible(relative_sel);
@@ -1359,7 +1371,8 @@ int ScreenRecoveryUI::ScrollMenu(int updown) {
 }
 
 size_t ScreenRecoveryUI::ShowMenu(std::unique_ptr<Menu>&& menu, bool menu_only,
-                                  const std::function<int(int, bool)>& key_handler) {
+                                  const std::function<int(int, bool)>& key_handler,
+                                  bool refresbable) {
   // Throw away keys pressed previously, so user doesn't accidentally trigger menu items.
   FlushKeys();
 
@@ -1422,12 +1435,18 @@ size_t ScreenRecoveryUI::ShowMenu(std::unique_ptr<Menu>&& menu, bool menu_only,
           selected = ScrollMenu(1);
           break;
         case Device::kInvokeItem:
-          chosen_item = selected;
+          if (selected < 0) {
+            chosen_item = Device::kGoBack;
+          } else {
+            chosen_item = selected;
+          }
           break;
         case Device::kNoAction:
           break;
         case Device::kRefresh:
-          chosen_item = Device::kRefresh;
+          if (refresbable) {
+            chosen_item = Device::kRefresh;
+          }
           break;
         case Device::kGoBack:
           chosen_item = Device::kGoBack;
@@ -1435,19 +1454,21 @@ size_t ScreenRecoveryUI::ShowMenu(std::unique_ptr<Menu>&& menu, bool menu_only,
         case Device::kGoHome:
           chosen_item = Device::kGoHome;
           break;
+        case Device::kDoSideload:
+          chosen_item = Device::kDoSideload;
+          break;
       }
     } else if (!menu_only) {
       chosen_item = action;
     }
 
     if (chosen_item == Device::kGoBack || chosen_item == Device::kGoHome ||
-        chosen_item == Device::kRefresh) {
+        chosen_item == Device::kRefresh || chosen_item == Device::kDoSideload) {
       break;
     }
   }
 
   menu_.reset();
-  Redraw();
 
   return chosen_item;
 }
@@ -1455,13 +1476,15 @@ size_t ScreenRecoveryUI::ShowMenu(std::unique_ptr<Menu>&& menu, bool menu_only,
 size_t ScreenRecoveryUI::ShowMenu(const std::vector<std::string>& headers,
                                   const std::vector<std::string>& items, size_t initial_selection,
                                   bool menu_only,
-                                  const std::function<int(int, bool)>& key_handler) {
+                                  const std::function<int(int, bool)>& key_handler,
+                                  bool refresbable) {
   auto menu = CreateMenu(headers, items, initial_selection);
   if (menu == nullptr) {
     return initial_selection;
   }
 
-  return ShowMenu(CreateMenu(headers, items, initial_selection), menu_only, key_handler);
+  return ShowMenu(CreateMenu(headers, items, initial_selection), menu_only, key_handler,
+                  refresbable);
 }
 
 size_t ScreenRecoveryUI::ShowPromptWipeDataMenu(const std::vector<std::string>& backup_headers,

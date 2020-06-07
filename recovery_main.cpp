@@ -188,6 +188,7 @@ static std::string load_locale_from_cache() {
 }
 
 static void copy_userdata_files() {
+  android::base::SetLogger(android::base::StdioLogger);
   if (ensure_path_mounted("/data") == 0) {
     if (access(adb_keys_root, F_OK) != 0) {
       if (access(adb_keys_data, R_OK) == 0) {
@@ -199,6 +200,7 @@ static void copy_userdata_files() {
     }
     ensure_path_unmounted("/data");
   }
+  android::base::SetLogger(UiLogger);
 }
 
 // Sets the usb config to 'state'.
@@ -447,6 +449,13 @@ int main(int argc, char** argv) {
     device->RemoveMenuItemForAction(Device::WIPE_CACHE);
   }
 
+  if (android::base::GetBoolProperty("ro.build.ab_update", false)) {
+    // There's not much point in formatting the active slot's system partition
+    // because ROMs are flashed to the inactive slot. Removing the menu option
+    // prevents users from accidentally trashing a functioning ROM.
+    device->RemoveMenuItemForAction(Device::WIPE_SYSTEM);
+  }
+
   if (!android::base::GetBoolProperty("ro.boot.dynamic_partitions", false) &&
       !android::base::GetBoolProperty("ro.fastbootd.available", false)) {
     device->RemoveMenuItemForAction(Device::ENTER_FASTBOOT);
@@ -456,6 +465,10 @@ int main(int argc, char** argv) {
     device->RemoveMenuItemForAction(Device::RUN_GRAPHICS_TEST);
     device->RemoveMenuItemForAction(Device::RUN_LOCALE_TEST);
     device->RemoveMenuItemForAction(Device::ENTER_RESCUE);
+  }
+
+  if (get_build_type() != "userdebug") {
+    device->RemoveMenuItemForAction(Device::ENABLE_ADB);
   }
 
   if (get_build_type() == "user") {
@@ -484,7 +497,7 @@ int main(int argc, char** argv) {
   // Set up adb_keys and enable root before starting ADB.
   if (is_ro_debuggable() && !fastboot) {
     copy_userdata_files();
-    android::base::SetProperty("lineage.service.adb.root", "1");
+    android::base::SetProperty("service.adb.root", "1");
   }
 
   while (true) {
@@ -560,6 +573,7 @@ int main(int argc, char** argv) {
       case Device::ENTER_RECOVERY:
         LOG(INFO) << "Entering recovery";
         fastboot = false;
+        device->GoHome();
         break;
 
       default:
